@@ -4851,12 +4851,11 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
 {
     /*** SETUP ***/
 
-    int nprocs  = commGrid->GetSize();
-    int myrank  = commGrid->GetRank();
-    int grrows  = commGrid->GetGridRows();
-    int grcols  = commGrid->GetGridCols();
-    int rowproc = commGrid->GetRankInProcRow();
-    int colproc = commGrid->GetRankInProcCol();
+    int nprocs = commGrid->GetSize();
+    int myrank = commGrid->GetRank();
+
+    IT row_offset, col_offset;
+    GetPlaceInGlobalGrid(row_offset, col_offset);
 
     /* Graphs have a square adjacency, and @Assignments should have a value
      * within the range of the world communicator group as well as exactly one
@@ -4868,8 +4867,6 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     IT maxproc = Assignments.Reduce(maximum<IT>(), static_cast<IT>(0));
     assert(maxproc < static_cast<IT>(nprocs));
 
-    int row_offset = (numvertices / grrows) * rowproc;
-    int col_offset = (numvertices / grcols) * colproc;
 
     /*** STEP ONE. ALLGATHER ASSIGNMENTS ***/
 
@@ -4931,10 +4928,10 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     int sbuflen = 0;
 
     for (auto colit = spSeq->begcol(); colit != spSeq->endcol(); ++colit) {
-        IT destproc = GlobAssignments[row_offset + colit.colid()];
+        IT destproc = GlobAssignments[col_offset + colit.colid()];
         for (auto nzit = spSeq->begnz(colit); nzit != spSeq->endnz(colit); ++nzit) {
-            if (destproc == GlobAssignments[col_offset + nzit.rowid()]) {
-                svec[destproc].push_back(std::make_tuple(col_offset + nzit.rowid(), row_offset + colit.colid(), nzit.value()));
+            if (destproc == GlobAssignments[row_offset + nzit.rowid()]) {
+                svec[destproc].push_back(std::make_tuple(row_offset + nzit.rowid(), col_offset + colit.colid(), nzit.value()));
                 sendcounts[destproc]++;
                 sbuflen++;
             }
