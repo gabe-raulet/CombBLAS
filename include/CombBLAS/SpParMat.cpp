@@ -4889,9 +4889,7 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     std::vector<IT> GlobAssignments(assigns_glen);
     GlobAssignments.assign(assigns_gbuf, assigns_gbuf + assigns_glen);
 
-    delete[] assigns_counts;
-    delete[] assigns_displs;
-    delete[] assigns_gbuf;
+    DeleteAll(assigns_counts, assigns_displs, assigns_gbuf);
 
     /* @LocalIdxs[i] = j means the ith local vertex corresponds to the jth
      * global vertex */
@@ -4961,11 +4959,7 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     /* Communicate all the edges! */
     MPI_Alltoallv(sbuf, sendcounts, sdispls, MPIType<std::tuple<IT,IT,NT>>(), rbuf, recvcounts, rdispls, MPIType<std::tuple<IT,IT,NT>>(), commGrid->GetWorld());
 
-    delete[] sbuf;
-    delete[] sendcounts;
-    delete[] recvcounts;
-    delete[] sdispls;
-    delete[] rdispls;
+    DeleteAll(sbuf, sendcounts, recvcounts, sdispls, rdispls);
 
     /* Have to update the local indices using @LocalIdxMap from earlier */
     for (int i = 0; i < rbuflen; ++i) {
