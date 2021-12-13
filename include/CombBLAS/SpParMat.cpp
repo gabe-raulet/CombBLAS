@@ -4858,7 +4858,7 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     int rowproc = commGrid->GetRankInProcRow();
     int colproc = commGrid->GetRankInProcCol();
 
-    /* graphs have a square adjacency, and @Assignments should have a value
+    /* Graphs have a square adjacency, and @Assignments should have a value
      * within the range of the world communicator group as well as exactly one
      * entry for each vertex */
     int numvertices = getnrow();
@@ -4878,6 +4878,8 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
 
     assigns_counts[myrank] = Assignments.MyLocLength();
 
+    /* Every processor should have access to each processor's local vector size
+     * for the Allgatherv */
     MPI_Allgather(MPI_IN_PLACE, 0, MPI_INT, assigns_counts, 1, MPI_INT, commGrid->GetWorld());
 
     std::partial_sum(assigns_counts, assigns_counts + nprocs - 1, assigns_displs + 1);
@@ -4894,9 +4896,15 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     delete[] assigns_displs;
     delete[] assigns_gbuf;
 
+    /* @LocalIdxs[i] = j means the ith local vertex corresponds to the jth
+     * global vertex */
     LocalIdxs.clear();
     LocalIdxs.shrink_to_fit();
 
+    /* Need @LocalIdxMap after the Alltoallv to map the transported edge indices
+     * to the correct local indices. @LocalIdxMap[i] = j means the the ith
+     * global vertex corresponds to the jth local vertex. This is the inverse
+     * function of @LocalIdxs */
     std::unordered_map<IT,IT> LocalIdxMap;
 
     IT cnt = 0;
@@ -4939,6 +4947,9 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     int *rs_recvcounts = new int[nprocs];
     std::fill(rs_recvcounts, rs_recvcounts + nprocs, 1);
 
+    /* Each local process knows how many edges it is sending to each other
+     * process, so in order for each process to know how many edges it is
+     * receiving total (@rbuflen), we do a Reduce_scatter */
     MPI_Reduce_scatter(sendcounts, &rbuflen, rs_recvcounts, MPI_INT, MPI_SUM, commGrid->GetWorld());
 
     std::partial_sum(sendcounts, sendcounts + nprocs - 1, sdispls + 1);
@@ -4950,6 +4961,7 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     for (int i = 0; i < nprocs; ++i)
         std::copy(svec[i].begin(), svec[i].end(), sbuf + sdispls[i]);
 
+    /* Communicate all the edges! */
     MPI_Alltoallv(sbuf, sendcounts, sdispls, MPIType<std::tuple<IT,IT,NT>>(), rbuf, recvcounts, rdispls, MPIType<std::tuple<IT,IT,NT>>(), commGrid->GetWorld());
 
     delete[] sbuf;
@@ -4958,11 +4970,14 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
     delete[] sdispls;
     delete[] rdispls;
 
+    /* Have to update the local indices using @LocalIdxMap from earlier */
     for (int i = 0; i < rbuflen; ++i) {
         std::get<0>(rbuf[i]) = LocalIdxMap[std::get<0>(rbuf[i])];
         std::get<1>(rbuf[i]) = LocalIdxMap[std::get<1>(rbuf[i])];
     }
 
+    /* Wanted to return SpMat<IT,NT,DER>, but I was getting segmentation faults
+     * and couldn't figure out why. So for now, I'm returning DER */
     DER LocalMat;
     LocalMat.Create(rbuflen, localdim, localdim, rbuf);
 
