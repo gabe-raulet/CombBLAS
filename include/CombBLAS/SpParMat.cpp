@@ -4847,6 +4847,129 @@ void SpParMat<IT,NT,DER>::Find (FullyDistVec<IT,IT> & distrows, FullyDistVec<IT,
 }
 
 template <class IT, class NT, class DER>
+DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assignments, std::vector<IT>& LocalIdxs) const
+{
+    /*** SETUP ***/
+
+    int nprocs  = commGrid->GetSize();
+    int myrank  = commGrid->GetRank();
+    int grrows  = commGrid->GetGridRows();
+    int grcols  = commGrid->GetGridCols();
+    int rowproc = commGrid->GetRankInProcRow();
+    int colproc = commGrid->GetRankInProcCol();
+
+    /* graphs have a square adjacency, and @Assignments should have a value
+     * within the range of the world communicator group as well as exactly one
+     * entry for each vertex */
+    int numvertices = getnrow();
+    assert(numvertices == getncol());
+    assert(numvertices == Assignments.TotalLength());
+
+    IT maxproc = Assignments.Reduce(maximum<IT>(), static_cast<IT>(0));
+    assert(maxproc < static_cast<IT>(nprocs));
+
+    int row_offset = (numvertices / grrows) * rowproc;
+    int col_offset = (numvertices / grcols) * colproc;
+
+    /*** STEP ONE. ALLGATHER ASSIGNMENTS ***/
+
+    int *assigns_counts = new int[nprocs]();
+    int *assigns_displs = new int[nprocs]();
+
+    assigns_counts[myrank] = Assignments.MyLocLength();
+
+    MPI_Allgather(MPI_IN_PLACE, 0, MPI_INT, assigns_counts, 1, MPI_INT, commGrid->GetWorld());
+
+    std::partial_sum(assigns_counts, assigns_counts + nprocs - 1, assigns_displs + 1);
+
+    int assigns_glen = Assignments.TotalLength();
+    IT *assigns_gbuf = new IT[assigns_glen];
+
+    MPI_Allgatherv(Assignments.GetLocArr(), assigns_counts[myrank], MPIType<IT>(), assigns_gbuf, assigns_counts, assigns_displs, MPIType<IT>(), commGrid->GetWorld());
+
+    std::vector<IT> GlobAssignments(assigns_glen);
+    GlobAssignments.assign(assigns_gbuf, assigns_gbuf + assigns_glen);
+
+    delete[] assigns_counts;
+    delete[] assigns_displs;
+    delete[] assigns_gbuf;
+
+    LocalIdxs.clear();
+    LocalIdxs.shrink_to_fit();
+
+    std::unordered_map<IT,IT> LocalIdxMap;
+
+    IT cnt = 0;
+
+    for (IT i = 0; i < GlobAssignments.size(); ++i)
+        if (GlobAssignments[i] == myrank) {
+            LocalIdxs.push_back(i);
+            LocalIdxMap[i] = cnt++;
+        }
+
+    IT localdim = LocalIdxs.size();
+
+    /*** STEP TWO. ALLTOALL EDGES ***/
+
+    /* @svec[i] is the vector of edges to be sent from local process to
+     * process i */
+    std::vector<std::vector<std::tuple<IT,IT,NT>>> svec(nprocs);
+
+    int *sendcounts = new int[nprocs]();
+    int *recvcounts = new int[nprocs]();
+    int *sdispls = new int[nprocs]();
+    int *rdispls = new int[nprocs]();
+
+    int sbuflen = 0;
+
+    for (auto colit = spSeq->begcol(); colit != spSeq->endcol(); ++colit) {
+        IT destproc = GlobAssignments[row_offset + colit.colid()];
+        for (auto nzit = spSeq->begnz(colit); nzit != spSeq->endnz(colit); ++nzit) {
+            if (destproc == GlobAssignments[col_offset + nzit.rowid()]) {
+                svec[destproc].push_back(std::make_tuple(col_offset + nzit.rowid(), row_offset + colit.colid(), nzit.value()));
+                sendcounts[destproc]++;
+                sbuflen++;
+            }
+        }
+    }
+
+    MPI_Alltoall(sendcounts, 1, MPI_INT, recvcounts, 1, MPI_INT, commGrid->GetWorld());
+
+    int rbuflen;
+    int *rs_recvcounts = new int[nprocs];
+    std::fill(rs_recvcounts, rs_recvcounts + nprocs, 1);
+
+    MPI_Reduce_scatter(sendcounts, &rbuflen, rs_recvcounts, MPI_INT, MPI_SUM, commGrid->GetWorld());
+
+    std::partial_sum(sendcounts, sendcounts + nprocs - 1, sdispls + 1);
+    std::partial_sum(recvcounts, recvcounts + nprocs - 1, rdispls + 1);
+
+    std::tuple<IT,IT,NT> *sbuf = new std::tuple<IT,IT,NT>[sbuflen];
+    std::tuple<IT,IT,NT> *rbuf = new std::tuple<IT,IT,NT>[rbuflen];
+
+    for (int i = 0; i < nprocs; ++i)
+        std::copy(svec[i].begin(), svec[i].end(), sbuf + sdispls[i]);
+
+    MPI_Alltoallv(sbuf, sendcounts, sdispls, MPIType<std::tuple<IT,IT,NT>>(), rbuf, recvcounts, rdispls, MPIType<std::tuple<IT,IT,NT>>(), commGrid->GetWorld());
+
+    delete[] sbuf;
+    delete[] sendcounts;
+    delete[] recvcounts;
+    delete[] sdispls;
+    delete[] rdispls;
+
+    for (int i = 0; i < rbuflen; ++i) {
+        std::get<0>(rbuf[i]) = LocalIdxMap[std::get<0>(rbuf[i])];
+        std::get<1>(rbuf[i]) = LocalIdxMap[std::get<1>(rbuf[i])];
+    }
+
+    DER LocalMat;
+    LocalMat.Create(rbuflen, localdim, localdim, rbuf);
+
+    return LocalMat;
+}
+
+template <class IT, class NT, class DER>
 std::ofstream& SpParMat<IT,NT,DER>::put(std::ofstream& outfile) const
 {
 	outfile << (*spSeq) << std::endl;

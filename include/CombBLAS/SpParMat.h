@@ -108,6 +108,8 @@ public:
 	template <typename _BinaryOperation>
 	void DimApply(Dim dim, const FullyDistVec<IT, NT>& v, _BinaryOperation __binary_op);
 
+    DER InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assignments, std::vector<IT>& LocalIdxs) const;
+
 	template <typename _BinaryOperation, typename _UnaryOperation >	
 	FullyDistVec<IT,NT> Reduce(Dim dim, _BinaryOperation __binary_op, NT id, _UnaryOperation __unary_op) const;
 
