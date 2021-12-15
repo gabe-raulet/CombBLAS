@@ -31,16 +31,18 @@ int main(int argc, char *argv[])
         A.ParallelReadMM(std::string(argv[1]), true, combblas::maximum<double>());
         assignments.ParallelRead(std::string(argv[2]), true, combblas::maximum<int>());
 
-        std::vector<int> local_idx_map;
+        assignments.DebugPrint();
 
-        combblas::SpCCols<int, double> locmat = A.InducedSubgraphs2Procs(assignments, local_idx_map);
+        // std::vector<int> local_idx_map;
 
-        for (auto colit = locmat.begcol(); colit != locmat.endcol(); ++colit) {
-            for (auto nzit = locmat.begnz(colit); nzit != locmat.endnz(colit); ++nzit) {
-                std::cout << local_idx_map[nzit.rowid()]+1 << "\t" << local_idx_map[colit.colid()]+1 << "\t" << nzit.value() << std::endl;
-            }
-        }
-        std::cout << std::endl;
+        // combblas::SpCCols<int, double> locmat = A.InducedSubgraphs2Procs(assignments, local_idx_map);
+
+        // for (auto colit = locmat.begcol(); colit != locmat.endcol(); ++colit) {
+            // for (auto nzit = locmat.begnz(colit); nzit != locmat.endnz(colit); ++nzit) {
+                // std::cout << local_idx_map[nzit.rowid()]+1 << "\t" << local_idx_map[colit.colid()]+1 << "\t" << nzit.value() << std::endl;
+            // }
+        // }
+        // std::cout << std::endl;
 
     }
 
