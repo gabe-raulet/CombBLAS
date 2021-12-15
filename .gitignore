@@ -21,3 +21,9 @@ test/temp_fullydistvec
 *.o
 SpGEMM3D
 mcl3d
+
+*.swp
+TESTDATA
+build
+subgraph_test.sh
+install

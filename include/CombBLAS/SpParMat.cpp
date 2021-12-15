@@ -4847,6 +4847,37 @@ void SpParMat<IT,NT,DER>::Find (FullyDistVec<IT,IT> & distrows, FullyDistVec<IT,
 }
 
 template <class IT, class NT, class DER>
+DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assignments, std::vector<IT>& LocalIdxs) const
+{
+    /*** SETUP ***/
+    int nprocs = commGrid->GetSize();
+    int myrank = commGrid->GetRank();
+
+    int nverts = getnrow();
+
+    if (nverts != getncol()) {
+        SpParHelper::Print("Number of rows and columns differ, not allowed for graphs!\n");
+        MPI_Abort(MPI_COMM_WORLD, DIMMISMATCH);
+    }
+
+    if (nverts != Assignments.TotalLength()) {
+        SpParHelper::Print("Assignments vector length does not match number of vertices!\n");
+        MPI_Abort(MPI_COMM_WORLD, DIMMISMATCH);
+    }
+
+    IT maxproc = Assignments.Reduce(maximum<IT>(), static_cast<IT>(0));
+
+    if (maxproc >= static_cast<IT>(nprocs)) {
+        SpParHelper::Print("Assignments vector assigns to process not not in this group!\n");
+        MPI_Abort(MPI_COMM_WORLD, DIMMISMATCH); /* wrong error code? */
+    }
+
+
+    DER LocalMat;
+    return LocalMat;
+}
+
+template <class IT, class NT, class DER>
 std::ofstream& SpParMat<IT,NT,DER>::put(std::ofstream& outfile) const
 {
 	outfile << (*spSeq) << std::endl;
