@@ -4846,13 +4846,50 @@ void SpParMat<IT,NT,DER>::Find (FullyDistVec<IT,IT> & distrows, FullyDistVec<IT,
 	distcols = ncols;
 }
 
+template <class NT>
+void PrintLocVec(std::vector<NT> vec, const char *name)
+{
+    int myrank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+
+    std::cout << myrank << ", " << name << ": ";
+    std::copy(vec.begin(), vec.end(), std::ostream_iterator<NT>(std::cout, " "));
+    std::cout << std::endl;
+}
+
+template <class IT, class NT>
+void PrintVecTuples(const std::vector<std::tuple<IT,IT,NT>>& tuples)
+{
+    int myrank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+
+    std::cout << myrank << ": ";
+
+    for (auto itr = tuples.begin(); itr != tuples.end(); ++itr) {
+        std::cout << "(" << std::get<0>(*itr) << ", " << std::get<1>(*itr) << ", " << std::get<2>(*itr) << ", ";
+    }
+    std::cout << std::endl;
+}
+
+template <class IT, class NT>
+void PrintArrTuples(const std::tuple<IT,IT,NT>* tuples, int size)
+{
+    int myrank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+
+    std::cout << myrank << ": ";
+
+    for (int i = 0; i < size; ++i) {
+        std::cout << "(" << 1+std::get<0>(tuples[i]) << ", " << 1+std::get<1>(tuples[i]) << ", " << std::get<2>(tuples[i]) << "), ";
+    }
+    std::cout << std::endl;
+}
+
 template <class IT, class NT, class DER>
 DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assignments, std::vector<IT>& LocalIdxs) const
 {
-    /*** SETUP ***/
     int nprocs = commGrid->GetSize();
     int myrank = commGrid->GetRank();
-
     int nverts = getnrow();
 
     if (nverts != getncol()) {
@@ -4872,8 +4909,113 @@ DER SpParMat<IT,NT,DER>::InducedSubgraphs2Procs(const FullyDistVec<IT,IT>& Assig
         MPI_Abort(MPI_COMM_WORLD, DIMMISMATCH); /* wrong error code? */
     }
 
+    MPI_Comm World = commGrid->GetWorld();
+    MPI_Comm RowWorld = commGrid->GetRowWorld();
+    MPI_Comm ColWorld = commGrid->GetColWorld();
+
+    int rowneighs, rowrank;
+    MPI_Comm_size(RowWorld, &rowneighs);
+    MPI_Comm_rank(RowWorld, &rowrank);
+
+    int mylocsize = Assignments.LocArrSize();
+    std::vector<int> rowvecs_counts(rowneighs, 0);
+    std::vector<int> rowvecs_displs(rowneighs, 0);
+
+    rowvecs_counts[rowrank] = mylocsize;
+
+    MPI_Allgather(MPI_IN_PLACE, 0, MPI_INT, rowvecs_counts.data(), 1, MPI_INT, RowWorld);
+
+    std::partial_sum(rowvecs_counts.begin(), rowvecs_counts.end()-1, rowvecs_displs.begin()+1);
+    int rowvecs_size = std::accumulate(rowvecs_counts.begin(), rowvecs_counts.end(), 0);
+
+    std::vector<IT> rowvecs(rowvecs_size);
+
+    MPI_Allgatherv(Assignments.GetLocArr(), mylocsize, MPIType<IT>(), rowvecs.data(), rowvecs_counts.data(), rowvecs_displs.data(), MPIType<IT>(), RowWorld);
+
+    int complement_rank = commGrid->GetComplementRank();
+    int complement_rowvecs_size = 0;
+
+    MPI_Sendrecv(&rowvecs_size, 1, MPI_INT,
+                 complement_rank, TRX,
+                 &complement_rowvecs_size, 1, MPI_INT,
+                 complement_rank, TRX,
+                 World, MPI_STATUS_IGNORE);
+
+    std::vector<IT> complement_rowvecs(complement_rowvecs_size);
+
+    MPI_Sendrecv(rowvecs.data(), rowvecs_size, MPIType<IT>(),
+                 complement_rank, TRX,
+                 complement_rowvecs.data(), complement_rowvecs_size, MPIType<IT>(),
+                 complement_rank, TRX,
+                 World, MPI_STATUS_IGNORE);
+
+    std::vector<std::vector<std::tuple<IT,IT,NT>>> svec(nprocs);
+
+    std::vector<int> sendcounts(nprocs, 0);
+    std::vector<int> recvcounts(nprocs, 0);
+    std::vector<int> sdispls(nprocs, 0);
+    std::vector<int> rdispls(nprocs, 0);
+
+    int sbuflen = 0;
+
+    IT row_offset, col_offset;
+    GetPlaceInGlobalGrid(row_offset, col_offset);
+
+    for (auto colit = spSeq->begcol(); colit != spSeq->endcol(); ++colit) {
+        IT destproc = complement_rowvecs[colit.colid()];
+        for (auto nzit = spSeq->begnz(colit); nzit != spSeq->endnz(colit); ++nzit) {
+            if (destproc == rowvecs[nzit.rowid()]) {
+                svec[destproc].push_back(std::make_tuple(row_offset + nzit.rowid(), col_offset + colit.colid(), nzit.value()));
+                sendcounts[destproc]++;
+                sbuflen++;
+            }
+        }
+    }
+
+    MPI_Alltoall(sendcounts.data(), 1, MPI_INT, recvcounts.data(), 1, MPI_INT, World);
+
+    int rbuflen = std::accumulate(recvcounts.begin(), recvcounts.end(), 0);
+
+    std::partial_sum(sendcounts.begin(), sendcounts.end()-1, sdispls.begin()+1);
+    std::partial_sum(recvcounts.begin(), recvcounts.end()-1, rdispls.begin()+1);
+
+    std::tuple<IT,IT,NT> *sbuf = new std::tuple<IT,IT,NT>[sbuflen];
+    std::tuple<IT,IT,NT> *rbuf = new std::tuple<IT,IT,NT>[rbuflen];
+
+    for (int i = 0; i < nprocs; ++i)
+        std::copy(svec[i].begin(), svec[i].end(), sbuf + sdispls[i]);
+
+
+    MPI_Alltoallv(sbuf, sendcounts.data(), sdispls.data(), MPIType<std::tuple<IT,IT,NT>>(), rbuf, recvcounts.data(), rdispls.data(), MPIType<std::tuple<IT,IT,NT>>(), World);
+
+    delete[] sbuf;
+
+    LocalIdxs.clear();
+    LocalIdxs.shrink_to_fit();
+
+    std::unordered_map<IT, IT> locmap;
+
+    IT new_id = 0;
+    IT global_ids[2];
+
+    for (int i = 0; i < rbuflen; ++i) {
+        global_ids[0] = std::get<0>(rbuf[i]);
+        global_ids[1] = std::get<1>(rbuf[i]);
+        for (int j = 0; j < 2; ++j) {
+            if (locmap.find(global_ids[j]) == locmap.end()) {
+                locmap.insert(std::make_pair(global_ids[j], new_id++));
+                LocalIdxs.push_back(global_ids[j]);
+            }
+        }
+        std::get<0>(rbuf[i]) = locmap[global_ids[0]];
+        std::get<1>(rbuf[i]) = locmap[global_ids[1]];
+    }
+
+    IT localdim = LocalIdxs.size();
 
     DER LocalMat;
+    LocalMat.Create(rbuflen, localdim, localdim, rbuf);
+
     return LocalMat;
 }
 

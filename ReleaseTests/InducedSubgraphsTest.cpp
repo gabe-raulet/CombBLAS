@@ -35,9 +35,10 @@ int main(int argc, char *argv[])
 
         combblas::SpCCols<int, double> locmat = A.InducedSubgraphs2Procs(assignments, local_idx_map);
 
+        std::cout << myrank << ": ";
         for (auto colit = locmat.begcol(); colit != locmat.endcol(); ++colit) {
             for (auto nzit = locmat.begnz(colit); nzit != locmat.endnz(colit); ++nzit) {
-                std::cout << local_idx_map[nzit.rowid()]+1 << "\t" << local_idx_map[colit.colid()]+1 << "\t" << nzit.value() << std::endl;
+                std::cout << "(" << local_idx_map[nzit.rowid()]+1 << ", " << local_idx_map[colit.colid()]+1 << ", " << nzit.value() << "), ";
             }
         }
         std::cout << std::endl;
