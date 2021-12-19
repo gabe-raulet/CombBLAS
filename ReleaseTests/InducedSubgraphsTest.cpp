@@ -15,12 +15,12 @@ int main(int argc, char *argv[])
 
     if (argc < 3) {
         if (!myrank)
-            std::cout << "Usage: ./Subgraphs2ProcsTest <MatrixA> <VectorAssignments>" << std::endl;
+            std::cerr << "Usage: ./Subgraphs2ProcsTest <MatrixA> <VectorAssignments>" << std::endl;
         MPI_Finalize();
         return -1;
     }
     {
-        if (!myrank) std::cout << "processor grid: (" << std::sqrt(nprocs) << " x " << std::sqrt(nprocs) << ")" << std::endl;
+        if (!myrank) std::cerr << "processor grid: (" << std::sqrt(nprocs) << " x " << std::sqrt(nprocs) << ")" << std::endl;
 
         std::shared_ptr<combblas::CommGrid> fullWorld;
         fullWorld.reset(new combblas::CommGrid(MPI_COMM_WORLD, 0, 0));
@@ -35,10 +35,9 @@ int main(int argc, char *argv[])
 
         combblas::SpCCols<int, double> locmat = A.InducedSubgraphs2Procs(assignments, local_idx_map);
 
-        std::cout << myrank << ": ";
         for (auto colit = locmat.begcol(); colit != locmat.endcol(); ++colit) {
             for (auto nzit = locmat.begnz(colit); nzit != locmat.endnz(colit); ++nzit) {
-                std::cout << "(" << local_idx_map[nzit.rowid()]+1 << ", " << local_idx_map[colit.colid()]+1 << ", " << nzit.value() << "), ";
+                std::cout << myrank << ": " << local_idx_map[nzit.rowid()]+1 << "\t" << local_idx_map[colit.colid()]+1 << "\t" << nzit.value() << std::endl;
             }
         }
         std::cout << std::endl;
