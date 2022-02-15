@@ -54,7 +54,6 @@ using namespace combblas;
 
 #define EPS 0.0001
 
-double mcl_symbolictime;
 double mcl_Abcasttime;
 double mcl_Bbcasttime;
 double mcl_localspgemmtime;
@@ -117,7 +116,6 @@ typedef struct
     bool isDoublePrecision; // true: double, false: float
     bool is64bInt; // true: int64_t for local indexing, false: int32_t (for local indexing)
     int layers; // Number of layers to use in communication avoiding SpGEMM. 
-    int compute;
     
     //debugging
     bool show;
@@ -153,7 +151,6 @@ void InitParam(HipMCLParam & param)
     
     //HipMCL optimization
     param.layers = 1;
-    param.compute = 1; // 1 means hash-based computation, 2 means heap-based computation
     param.phases = 1;
     param.perProcessMem = 0;
     param.isDoublePrecision = true;
@@ -212,7 +209,6 @@ void ShowParam(HipMCLParam & param)
     
     runinfo << "HipMCL optimization" << endl;
     runinfo << "    Number of layers : " << param.layers << endl;
-    runinfo << "    Computation kernel : " << param.compute << endl;
     runinfo << "    Number of phases: " << param.phases << endl;
     runinfo << "    Memory avilable per process: ";
     if(param.perProcessMem>0) runinfo << param.perProcessMem << "GB" << endl;
@@ -284,9 +280,6 @@ void ProcessParam(int argc, char* argv[], HipMCLParam & param)
 		else if (strcmp(argv[i],"-layers")==0) {
             param.layers = atoi(argv[i + 1]);
         }
-		else if (strcmp(argv[i],"-compute")==0) {
-            param.layers = atoi(argv[i + 1]);
-        }
         else if (strcmp(argv[i],"-phases")==0) {
             param.phases = atoi(argv[i + 1]);
         }
@@ -344,7 +337,6 @@ void ShowOptions()
     
     runinfo << "HipMCL optimization" << endl;
     runinfo << "    -layers <number of layers> (default:1)\n";
-    runinfo << "    -compute <1 or 2> (default:1)\n";
     runinfo << "    -phases <number of phases> (default:1)\n";
     runinfo << "    -per-process-mem <memory (GB) available per process> (default:0, number of phases is not estimated)\n";
     runinfo << "    --single-precision (if not provided, use double precision floating point numbers)\n" << endl;
@@ -362,7 +354,7 @@ void ShowOptions()
     runinfo << "Same as above with 4 processes and 2 theaded per process cores:\nexport OMP_NUM_THREADS=2\nmpirun -np 4 bin/hipmcl -M data/sevenvertexgraph.txt -I 2 -per-process-mem 2" << endl;
     runinfo << "Example with a graph in matrix market format:\nbin/hipmcl -M data/sevenvertex.mtx --matrix-market -base 1 -I 2 -per-process-mem 8" << endl;
     
-    runinfo << "Example on the NERSC/Cori system with 16 nodes, 4 process per node and 16 threads per process: \nsrun -N 16 -n 64 -c 16  bin/hipmcl -M data/hep-th.mtx --matrix-market -base 1 -per-process-mem 27 -o hep-th.hipmcl" << endl;
+    runinfo << "Example on the NERSC/Edison system with 16 nodes and 24 threads per node: \nsrun -N 16 -n 16 -c 24  bin/hipmcl -M data/hep-th.mtx --matrix-market -base 1 -per-process-mem 64 -o hep-th.hipmcl" << endl;
     SpParHelper::Print(runinfo.str());
 }
 
@@ -571,7 +563,7 @@ FullyDistVec<IT, IT> HipMCL(SpParMat<IT,NT,DER> & A, HipMCLParam & param)
         double t1 = MPI_Wtime();
         //A.Square<PTFF>() ;        // expand
 		if(param.layers == 1){
-			A = MemEfficientSpGEMM<PTFF, NT, DER>(A, A, param.phases, param.prunelimit, (IT)param.select, (IT)param.recover_num, param.recover_pct, param.kselectVersion, 1, param.perProcessMem);
+			A = MemEfficientSpGEMM<PTFF, NT, DER>(A, A, param.phases, param.prunelimit, (IT)param.select, (IT)param.recover_num, param.recover_pct, param.kselectVersion, param.perProcessMem);
 		}
 		else{
 			A3D_cs = MemEfficientSpGEMM3D<PTFF, NT, DER, IT, NT, NT, DER, DER >(
@@ -581,8 +573,7 @@ FullyDistVec<IT, IT> HipMCL(SpParMat<IT,NT,DER> & A, HipMCLParam & param)
                 (IT)param.select, 
                 (IT)param.recover_num, 
                 param.recover_pct, 
-                param.kselectVersion,
-                1,
+                param.kselectVersion, 
                 param.perProcessMem
          	);
 		}
